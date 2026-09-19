@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.stickyHeader
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -27,18 +28,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -70,9 +67,6 @@ fun FreezerScreen(
     val floorCount by viewModel.floorCount.collectAsState()
     val selectedIds by viewModel.selectedIds.collectAsState()
     val isSelectionMode by viewModel.isSelectionMode.collectAsState()
-
-    var currentFloorIndex by rememberSaveable { mutableIntStateOf(0) }
-    val currentFloor = (currentFloorIndex + 1).coerceIn(1, floorCount.coerceAtLeast(1))
 
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -117,50 +111,84 @@ fun FreezerScreen(
         },
         floatingActionButton = {
             if (!isSelectionMode) {
-                FloatingActionButton(onClick = { onAddFood(currentFloor) }) {
+                FloatingActionButton(onClick = { onAddFood(1) }) {
                     Icon(Icons.Filled.Add, contentDescription = "Ajouter un aliment")
                 }
             }
         }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding)) {
-            if (floorCount > 1) {
-                TabRow(selectedTabIndex = currentFloorIndex) {
-                    for (i in 0 until floorCount) {
-                        Tab(
-                            selected = currentFloorIndex == i,
-                            onClick = { currentFloorIndex = i },
-                            text = { Text("Étage ${i + 1}") }
-                        )
+        if (foods.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Ton congélateur est vide.\nAppuie sur + pour ajouter un aliment.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                for (floor in 1..floorCount.coerceAtLeast(1)) {
+                    val floorFoods = foods.filter { it.floor == floor }
+
+                    stickyHeader(key = "header-$floor") {
+                        FloorHeader(floor = floor, count = floorFoods.size, onAddFood = { onAddFood(floor) })
+                    }
+
+                    if (floorFoods.isEmpty()) {
+                        item(key = "empty-$floor") {
+                            Text(
+                                text = "Aucun aliment sur cet étage.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
+                    } else {
+                        items(floorFoods, key = { it.id }) { food ->
+                            FoodRow(
+                                food = food,
+                                isSelectionMode = isSelectionMode,
+                                isSelected = food.id in selectedIds,
+                                onClick = {
+                                    if (isSelectionMode) viewModel.toggleSelection(food.id) else onEditFood(food)
+                                },
+                                onLongClick = { viewModel.toggleSelection(food.id) },
+                                onDelete = { viewModel.deleteFood(food) }
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+}
 
-            val floorFoods = foods.filter { it.floor == currentFloor }
-
-            if (floorFoods.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "Aucun aliment sur cet étage.\nAppuie sur + pour en ajouter un.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(floorFoods, key = { it.id }) { food ->
-                        FoodRow(
-                            food = food,
-                            isSelectionMode = isSelectionMode,
-                            isSelected = food.id in selectedIds,
-                            onClick = {
-                                if (isSelectionMode) viewModel.toggleSelection(food.id) else onEditFood(food)
-                            },
-                            onLongClick = { viewModel.toggleSelection(food.id) },
-                            onDelete = { viewModel.deleteFood(food) }
-                        )
-                    }
-                }
+@Composable
+private fun FloorHeader(floor: Int, count: Int, onAddFood: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Étage $floor" + if (count > 0) " · $count" else "",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            IconButton(onClick = onAddFood) {
+                Icon(Icons.Filled.Add, contentDescription = "Ajouter un aliment à cet étage")
             }
         }
     }
