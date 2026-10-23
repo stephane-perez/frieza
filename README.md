@@ -2,15 +2,19 @@
 
 Application Android (Kotlin + Jetpack Compose) de gestion de congélateur — 100% locale, aucun compte, aucune clé API.
 
-## Fonctionnalités du squelette
+## Fonctionnalités
 
-- Configuration initiale du congélateur (nombre d'étages), modifiable ensuite
-- Ajout / consultation / édition / suppression d'aliments (Room, base locale)
-- Catégorisation (légumes, plats complets, viandes, poissons, condiments, ...)
-- Quantité optionnelle : poids (g) ou nombre de portions
-- Date de péremption optionnelle (prête pour un futur système d'alertes)
-- Sélection multiple par appui long (comme dans une galerie photo) puis copie
-  d'un prompt "ingrédients" dans le presse-papier, à coller dans l'IA de son choix
+- Plusieurs congélateurs, chacun avec des tiroirs nommés (ajout, renommage, réordonnancement, suppression)
+- Vue verticale : tiroirs empilés et repliables, aliments en puces colorées par catégorie
+- Catégories personnalisables (nom + couleur), plusieurs catégories par aliment
+- Quantités : nombre, poids (g) et portions, cumulables
+- Date de congélation, date « à consommer avant » (raccourcis +3/+6/+12 mois), notes
+- Badges de péremption proche, recherche, filtre par catégorie, tri (nom / péremption / ajout récent)
+- Dupliquer un aliment, le déplacer d'un tiroir ou congélateur à l'autre (formulaire)
+- Liste de courses (avec « ranger au congélateur »)
+- Sélection multiple (appui long) puis copie d'un prompt « recettes » pour l'IA de ton choix
+- Sauvegarde / restauration JSON, et import d'un export de l'application Frizor
+- 100 % local, aucun compte, aucune clé API. Les données de la v1 sont migrées automatiquement.
 
 ## Générer l'APK via GitHub Actions (sans Android Studio)
 
