@@ -2,8 +2,16 @@ name: Build APK
 
 on:
   push:
-    branches: [ "main", "feature/**" ]
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach to its release (e.g. v1.0.0). Leave empty for a dev build."
+        required: false
+        default: ""
 
 jobs:
   build:
@@ -12,9 +20,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -32,12 +42,56 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      # Tag v1.2.3 -> versionName 1.2.3. Anything else is a clearly-marked dev build.
+      # versionCode is the run number, so it strictly increases from build to build.
+      - name: Determine version
+        id: version
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [[ -z "$TAG" && "${GITHUB_REF}" == refs/tags/v* ]]; then TAG="${GITHUB_REF_NAME}"; fi
+          if [[ -n "$TAG" ]]; then
+            VERSION_NAME="${TAG#v}"
+          else
+            VERSION_NAME="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "Building version $VERSION_NAME (code ${GITHUB_RUN_NUMBER})"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload APK
+      - name: Build debug APK
+        run: >
+          ./gradlew assembleDebug --no-daemon --stacktrace
+          -PversionNameOverride=${{ steps.version.outputs.version_name }}
+          -PversionCodeOverride=${{ steps.version.outputs.version_code }}
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/frieza.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: frieza-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: frieza-apk
+          path: app/build/outputs/apk/debug/frieza.apk
           if-no-files-found: error
+
+  # On a tag push (v*), attach the APK to the GitHub Release (created if it doesn't exist yet,
+  # otherwise the existing release/draft for that tag gets the file).
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frieza-apk
+          path: dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: dist/frieza.apk
+          generate_release_notes: true

@@ -4,6 +4,11 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// Version shown to the user comes from the Git tag (v1.2.3 -> 1.2.3), passed in by CI as
+// -PversionNameOverride / -PversionCodeOverride. Local builds fall back to a dev version.
+val appVersionName: String = (project.findProperty("versionNameOverride") as String?) ?: "0.0.0-dev"
+val appVersionCode: Int = (project.findProperty("versionCodeOverride") as String?)?.toIntOrNull() ?: 1
+
 android {
     namespace = "com.frieza.freezer"
     compileSdk = 34
@@ -12,8 +17,20 @@ android {
         applicationId = "com.frieza.freezer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+    }
+
+    // Fixed, public debug key (like the Android default): every CI build is signed with the
+    // same key, so a new APK installs over the previous one without uninstalling.
+    // Never use it to publish on a store.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
