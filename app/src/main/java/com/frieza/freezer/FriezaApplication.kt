@@ -6,6 +6,9 @@ import com.frieza.freezer.data.FriezaRepository
 
 class FriezaApplication : Application() {
     val repository: FriezaRepository by lazy {
-        FriezaRepository(FriezaDatabase.getInstance(this))
+        FriezaRepository(
+            FriezaDatabase.getInstance(this),
+            getSharedPreferences("frieza_prefs", MODE_PRIVATE)
+        )
     }
 }

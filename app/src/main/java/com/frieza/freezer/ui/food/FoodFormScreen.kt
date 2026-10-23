@@ -1,17 +1,25 @@
 package com.frieza.freezer.ui.food
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -32,61 +40,95 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.frieza.freezer.data.Category
+import com.frieza.freezer.data.Drawer
 import com.frieza.freezer.data.Food
-import com.frieza.freezer.data.FoodCategory
+import com.frieza.freezer.data.Freezer
 import com.frieza.freezer.data.FriezaRepository
-import com.frieza.freezer.data.QuantityType
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.frieza.freezer.util.addMonthsUtc
+import com.frieza.freezer.util.formatDate
+import com.frieza.freezer.util.todayUtcMillis
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+private const val PICK_NONE = 0
+private const val PICK_FREEZE = 1
+private const val PICK_EXPIRATION = 2
+
+private fun digitsOnly(input: String): String = input.filter { it.isDigit() }.take(7)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun FoodFormScreen(
     repository: FriezaRepository,
-    floor: Int,
+    drawerId: Long,
     foodId: Long?,
+    initialName: String,
     onDone: () -> Unit
 ) {
     val isEditing = foodId != null
     val scope = rememberCoroutineScope()
-    val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy", Locale.FRANCE) }
 
-    var name by rememberSaveable { mutableStateOf("") }
-    var category by rememberSaveable { mutableStateOf(FoodCategory.AUTRE) }
-    var selectedFloor by rememberSaveable { mutableIntStateOf(floor) }
-    var floorCount by rememberSaveable { mutableIntStateOf(floor) }
-    var quantityType by rememberSaveable { mutableStateOf(QuantityType.AUCUNE) }
-    var quantityValueText by rememberSaveable { mutableStateOf("") }
+    val freezers by repository.freezers.collectAsState(initial = emptyList<Freezer>())
+    val allDrawers by repository.drawers.collectAsState(initial = emptyList<Drawer>())
+    val categories by repository.categories.collectAsState(initial = emptyList<Category>())
+
+    var name by rememberSaveable { mutableStateOf(initialName) }
+    // Selected category ids, kept as "1,2,3" so that it survives rotation.
+    var categoryIdsText by rememberSaveable { mutableStateOf("") }
+    var selectedDrawerId by rememberSaveable { mutableStateOf(drawerId) }
+    var unitCountText by rememberSaveable { mutableStateOf("") }
+    var weightText by rememberSaveable { mutableStateOf("") }
+    var portionsText by rememberSaveable { mutableStateOf("") }
+    var freezeMillis by rememberSaveable { mutableStateOf<Long?>(if (foodId == null) todayUtcMillis() else null) }
     var expirationMillis by rememberSaveable { mutableStateOf<Long?>(null) }
-    var showDatePicker by rememberSaveable { mutableStateOf(false) }
+    var notes by rememberSaveable { mutableStateOf("") }
     var dateAdded by rememberSaveable { mutableStateOf(System.currentTimeMillis()) }
+    var pickTarget by rememberSaveable { mutableStateOf(PICK_NONE) }
 
-    LaunchedEffect(Unit) {
-        repository.getConfigOnce()?.let { floorCount = it.floorCount }
-        if (isEditing && foodId != null) {
+    val selectedCategoryIds = remember(categoryIdsText) {
+        categoryIdsText.split(",").mapNotNull { it.toLongOrNull() }
+    }
+
+    LaunchedEffect(foodId) {
+        if (foodId != null) {
             repository.getFood(foodId)?.let { food ->
                 name = food.name
-                category = food.category
-                selectedFloor = food.floor
-                quantityType = food.quantityType
-                quantityValueText = food.quantityValue?.toString() ?: ""
+                categoryIdsText = food.categoryIds.joinToString(",")
+                selectedDrawerId = food.drawerId
+                unitCountText = food.unitCount?.toString() ?: ""
+                weightText = food.weightGrams?.toString() ?: ""
+                portionsText = food.portions?.toString() ?: ""
+                freezeMillis = food.freezeDate
                 expirationMillis = food.expirationDate
+                notes = food.notes
                 dateAdded = food.dateAdded
             }
         }
     }
+
+    // Make sure the selected drawer exists (e.g. drawer id -1 coming from a shortcut).
+    LaunchedEffect(allDrawers, freezers) {
+        if (allDrawers.isNotEmpty() && allDrawers.none { it.id == selectedDrawerId }) {
+            selectedDrawerId = allDrawers.first().id
+        }
+    }
+
+    val currentDrawer = allDrawers.firstOrNull { it.id == selectedDrawerId }
+    var selectedFreezerId by rememberSaveable { mutableStateOf(-1L) }
+    val effectiveFreezerId = currentDrawer?.freezerId ?: selectedFreezerId
+    val drawersOfFreezer = allDrawers.filter { it.freezerId == effectiveFreezerId }.sortedBy { it.position }
 
     Scaffold(
         topBar = {
@@ -98,10 +140,18 @@ fun FoodFormScreen(
                     }
                 },
                 actions = {
-                    if (isEditing) {
+                    if (foodId != null) {
                         IconButton(onClick = {
                             scope.launch {
-                                repository.getFood(foodId!!)?.let { repository.deleteFood(it) }
+                                repository.duplicateFood(foodId)
+                                onDone()
+                            }
+                        }) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = "Dupliquer")
+                        }
+                        IconButton(onClick = {
+                            scope.launch {
+                                repository.deleteFood(foodId)
                                 onDone()
                             }
                         }) {
@@ -123,67 +173,68 @@ fun FoodFormScreen(
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
+                singleLine = true,
                 label = { Text("Nom de l'aliment") },
                 modifier = Modifier.fillMaxWidth()
             )
 
-            var categoryExpanded by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(
-                expanded = categoryExpanded,
-                onExpandedChange = { categoryExpanded = it }
-            ) {
-                OutlinedTextField(
-                    value = category.label,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Catégorie") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor()
-                )
-                ExposedDropdownMenu(
-                    expanded = categoryExpanded,
-                    onDismissRequest = { categoryExpanded = false }
+            Column {
+                Text("Catégories", style = MaterialTheme.typography.labelLarge)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 8.dp)
                 ) {
-                    FoodCategory.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option.label) },
+                    categories.forEach { category ->
+                        val selected = category.id in selectedCategoryIds
+                        FilterChip(
+                            selected = selected,
                             onClick = {
-                                category = option
-                                categoryExpanded = false
+                                val updated = if (selected) selectedCategoryIds - category.id
+                                else selectedCategoryIds + category.id
+                                categoryIdsText = updated.joinToString(",")
+                            },
+                            label = { Text(category.name) },
+                            leadingIcon = {
+                                Box(
+                                    Modifier
+                                        .size(12.dp)
+                                        .background(Color(category.color), CircleShape)
+                                )
                             }
                         )
                     }
                 }
             }
 
-            if (floorCount > 1) {
-                var floorExpanded by remember { mutableStateOf(false) }
+            if (freezers.size > 1) {
+                var freezerExpanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(
-                    expanded = floorExpanded,
-                    onExpandedChange = { floorExpanded = it }
+                    expanded = freezerExpanded,
+                    onExpandedChange = { freezerExpanded = it }
                 ) {
                     OutlinedTextField(
-                        value = "Étage $selectedFloor",
+                        value = freezers.firstOrNull { it.id == effectiveFreezerId }?.name ?: "",
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Étage") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = floorExpanded) },
+                        label = { Text("Congélateur") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = freezerExpanded) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .menuAnchor()
                     )
                     ExposedDropdownMenu(
-                        expanded = floorExpanded,
-                        onDismissRequest = { floorExpanded = false }
+                        expanded = freezerExpanded,
+                        onDismissRequest = { freezerExpanded = false }
                     ) {
-                        (1..floorCount).forEach { f ->
+                        freezers.forEach { freezer ->
                             DropdownMenuItem(
-                                text = { Text("Étage $f") },
+                                text = { Text(freezer.name) },
                                 onClick = {
-                                    selectedFloor = f
-                                    floorExpanded = false
+                                    selectedFreezerId = freezer.id
+                                    allDrawers.filter { it.freezerId == freezer.id }
+                                        .minByOrNull { it.position }
+                                        ?.let { selectedDrawerId = it.id }
+                                    freezerExpanded = false
                                 }
                             )
                         }
@@ -191,66 +242,120 @@ fun FoodFormScreen(
                 }
             }
 
-            Column {
-                Text("Quantité", style = MaterialTheme.typography.labelLarge)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(top = 8.dp)
+            var drawerExpanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = drawerExpanded,
+                onExpandedChange = { drawerExpanded = it }
+            ) {
+                OutlinedTextField(
+                    value = currentDrawer?.name ?: "",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Tiroir") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = drawerExpanded) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = drawerExpanded,
+                    onDismissRequest = { drawerExpanded = false }
                 ) {
-                    QuantityType.entries.forEach { type ->
-                        FilterChip(
-                            selected = quantityType == type,
+                    drawersOfFreezer.forEach { drawer ->
+                        DropdownMenuItem(
+                            text = { Text(drawer.name) },
                             onClick = {
-                                quantityType = type
-                                if (type == QuantityType.AUCUNE) quantityValueText = ""
-                            },
-                            label = { Text(type.label) }
+                                selectedDrawerId = drawer.id
+                                drawerExpanded = false
+                            }
                         )
                     }
                 }
             }
 
-            if (quantityType != QuantityType.AUCUNE) {
-                OutlinedTextField(
-                    value = quantityValueText,
-                    onValueChange = { input -> if (input.all { it.isDigit() }) quantityValueText = input },
-                    label = { Text(if (quantityType == QuantityType.POIDS) "Poids (g)" else "Nombre de portions") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
             Column {
-                Text("Date de péremption (optionnel)", style = MaterialTheme.typography.labelLarge)
+                Text("Quantité (optionnel)", style = MaterialTheme.typography.labelLarge)
                 Row(
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(top = 8.dp)
                 ) {
-                    OutlinedButton(onClick = { showDatePicker = true }) {
-                        Text(expirationMillis?.let { dateFormat.format(Date(it)) } ?: "Choisir une date")
-                    }
-                    if (expirationMillis != null) {
-                        TextButton(onClick = { expirationMillis = null }) {
-                            Text("Effacer")
-                        }
+                    OutlinedTextField(
+                        value = unitCountText,
+                        onValueChange = { unitCountText = digitsOnly(it) },
+                        singleLine = true,
+                        label = { Text("Nombre") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = weightText,
+                        onValueChange = { weightText = digitsOnly(it) },
+                        singleLine = true,
+                        label = { Text("Poids (g)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = portionsText,
+                        onValueChange = { portionsText = digitsOnly(it) },
+                        singleLine = true,
+                        label = { Text("Portions") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            DateField(
+                label = "Date de congélation",
+                value = freezeMillis,
+                onPick = { pickTarget = PICK_FREEZE },
+                onClear = { freezeMillis = null }
+            )
+
+            Column {
+                DateField(
+                    label = "À consommer avant le",
+                    value = expirationMillis,
+                    onPick = { pickTarget = PICK_EXPIRATION },
+                    onClear = { expirationMillis = null }
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 8.dp)
+                ) {
+                    listOf(3, 6, 12).forEach { months ->
+                        AssistChip(
+                            onClick = { expirationMillis = addMonthsUtc(freezeMillis ?: todayUtcMillis(), months) },
+                            label = { Text("+$months mois") }
+                        )
                     }
                 }
             }
 
+            OutlinedTextField(
+                value = notes,
+                onValueChange = { notes = it.take(180) },
+                label = { Text("Notes (optionnel)") },
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
+
             Button(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = name.isNotBlank(),
+                enabled = name.isNotBlank() && currentDrawer != null,
                 onClick = {
-                    val quantityValue = quantityValueText.toIntOrNull()
                     val food = Food(
                         id = foodId ?: 0,
                         name = name.trim(),
-                        category = category,
-                        floor = selectedFloor,
-                        quantityType = quantityType,
-                        quantityValue = if (quantityType == QuantityType.AUCUNE) null else quantityValue,
+                        drawerId = selectedDrawerId,
+                        categoryIds = selectedCategoryIds,
+                        unitCount = unitCountText.toIntOrNull(),
+                        weightGrams = weightText.toIntOrNull(),
+                        portions = portionsText.toIntOrNull(),
+                        freezeDate = freezeMillis,
                         expirationDate = expirationMillis,
+                        notes = notes.trim(),
                         dateAdded = dateAdded
                     )
                     scope.launch {
@@ -264,21 +369,42 @@ fun FoodFormScreen(
         }
     }
 
-    if (showDatePicker) {
-        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = expirationMillis)
+    if (pickTarget != PICK_NONE) {
+        val initial = if (pickTarget == PICK_FREEZE) freezeMillis else expirationMillis
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initial ?: todayUtcMillis())
         DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
+            onDismissRequest = { pickTarget = PICK_NONE },
             confirmButton = {
                 TextButton(onClick = {
-                    expirationMillis = datePickerState.selectedDateMillis
-                    showDatePicker = false
+                    val picked = datePickerState.selectedDateMillis
+                    if (pickTarget == PICK_FREEZE) freezeMillis = picked else expirationMillis = picked
+                    pickTarget = PICK_NONE
                 }) { Text("OK") }
             },
             dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Annuler") }
+                TextButton(onClick = { pickTarget = PICK_NONE }) { Text("Annuler") }
             }
         ) {
             DatePicker(state = datePickerState)
+        }
+    }
+}
+
+@Composable
+private fun DateField(label: String, value: Long?, onPick: () -> Unit, onClear: () -> Unit) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(top = 8.dp)
+        ) {
+            OutlinedButton(onClick = onPick) {
+                Text(value?.let { formatDate(it) } ?: "Choisir une date")
+            }
+            if (value != null) {
+                TextButton(onClick = onClear) { Text("Effacer") }
+            }
         }
     }
 }
